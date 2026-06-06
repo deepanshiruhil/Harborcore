@@ -69,7 +69,7 @@ def get_connection():
     try:
         return mysql.connector.connect(
             host='127.0.0.1', database='harborcore',
-            user='root', password='eshaan1306', autocommit=False
+            user='root', password='deepanshicsai24', autocommit=False
         )
     except Error:
         return None
@@ -86,7 +86,7 @@ def run_query(sql, params=None):
     try:
         conn = mysql.connector.connect(
             host='127.0.0.1', database='harborcore',
-            user='root', password='eshaan1306', autocommit=True
+            user='root', password='deepanshicsai24', autocommit=True
         )
         cur = conn.cursor(dictionary=True)
         cur.execute(sql, params or ())
@@ -102,7 +102,7 @@ def run_write(sql, params=None):
     try:
         conn = mysql.connector.connect(
             host='127.0.0.1', database='harborcore',
-            user='root', password='eshaan1306', autocommit=False
+            user='root', password='deepanshicsai24', autocommit=False
         )
         cur = conn.cursor()
         try:
@@ -122,7 +122,7 @@ def run_transaction(statements):
     try:
         conn = mysql.connector.connect(
             host='127.0.0.1', database='harborcore',
-            user='root', password='eshaan1306', autocommit=False
+            user='root', password='deepanshicsai24', autocommit=False
         )
         cur = conn.cursor()
         try:
@@ -141,7 +141,7 @@ def run_transaction(statements):
             return False, str(e)
         finally:
             cur.close()
-            conn.close()  # always close fresh connections
+            conn.close()
     except Error as e:
         return False, f"Connection failed: {e}"
 
@@ -711,16 +711,12 @@ Both the voyage record and the berth status update happen inside one transaction
                     c2.metric("Berth After", post_status, delta="Occupied ✓")
                     c3.metric("Voyage Inserted", f"VOY {voy_num}")
                     st.info("Both INSERT and UPDATE committed atomically in one transaction.")
-
-                    # Store cleanup state in session state — only clean up when user clicks
                     st.session_state['t1_cleanup'] = (voy_num, v_map[sel_v], sel_b)
                     st.warning("⚠️ DB is in modified state. Click below to restore for re-runs.")
                     st.rerun()
-
                 else:
                     st.error(f"❌ ROLLBACK — {result}")
 
-            # cleanup button outside the form
             if 't1_cleanup' in st.session_state:
                 if st.button("🔄 Restore DB (cleanup for re-run)", key="t1_cleanup_btn"):
                     vno_c, imo_c, b_c = st.session_state['t1_cleanup']
@@ -862,10 +858,8 @@ Both the voyage record and the berth status update happen inside one transaction
 
             if go:
                 v_map2 = dict(zip(vessel_df2['name'], vessel_df2['imo_number']))
-
                 pre_status = run_query(f"SELECT status FROM berth WHERE berth_id='{b_sel}'").iloc[0]['status']
 
-                # ── SESSION A: Insert voyage + mark berth Occupied ──
                 ok_a, res_a = run_transaction([
                     ("INSERT INTO voyage (imo_number, voyage_no, arrival_date, berth_id) VALUES (%s,%s,%s,%s)",
                     (v_map2[v_a], vno_a, date.today(), b_sel)),
@@ -874,8 +868,6 @@ Both the voyage record and the berth status update happen inside one transaction
 
                 mid_status = run_query(f"SELECT status FROM berth WHERE berth_id='{b_sel}'").iloc[0]['status']
 
-                # ── SESSION B: Also tries to INSERT into same berth ──
-                # The before_voyage_insert trigger will now fire because berth is Occupied
                 ok_b, res_b = run_transaction([
                     ("INSERT INTO voyage (imo_number, voyage_no, arrival_date, berth_id) VALUES (%s,%s,%s,%s)",
                     (v_map2[v_b], vno_b, date.today(), b_sel)),
@@ -883,7 +875,6 @@ Both the voyage record and the berth status update happen inside one transaction
 
                 final_status = run_query(f"SELECT status FROM berth WHERE berth_id='{b_sel}'").iloc[0]['status']
 
-                # ── Results ──
                 st.markdown("### Results")
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Berth Before", pre_status)
@@ -904,7 +895,6 @@ Both the voyage record and the berth status update happen inside one transaction
                     else:
                         st.error(f"🚫 ROLLBACK — Trigger blocked: {res_b}")
 
-                # Show what's in the voyage table now
                 voyages_at_berth = run_query(f"""
                     SELECT voy.voyage_no, v.name AS vessel, voy.arrival_date, voy.berth_id
                     FROM voyage voy JOIN vessel v ON voy.imo_number = v.imo_number
@@ -914,12 +904,10 @@ Both the voyage record and the berth status update happen inside one transaction
                 st.dataframe(voyages_at_berth, use_container_width=True, hide_index=True)
                 st.info("Only Session A's voyage appears — Session B was blocked by the trigger.")
 
-                # Store cleanup in session state so user can see the state first
                 st.session_state['t4_cleanup'] = (vno_a, v_map2[v_a], b_sel)
                 st.warning("⚠️ DB is in modified state. Session A's voyage is live. Click below to restore.")
                 st.rerun()
 
-        # Cleanup button outside form
         if 't4_cleanup' in st.session_state:
             if st.button("🔄 Restore DB (cleanup for re-run)", key="t4_cleanup_btn"):
                 vno_c, imo_c, b_c = st.session_state['t4_cleanup']
@@ -958,29 +946,22 @@ Both the voyage record and the berth status update happen inside one transaction
         if go and sel_inv5:
             import mysql.connector as _mc
 
-            DB = dict(host='127.0.0.1', database='harborcore', user='root', password='eshaan1306')
+            DB = dict(host='127.0.0.1', database='harborcore', user='root', password='deepanshicsai24')
             original = float(run_query(f"SELECT amount FROM invoice WHERE invoice_id='{sel_inv5}'").iloc[0]['amount'])
 
-            # ── PART 1: LOST UPDATE (no locking) ──────────────────
-            # Both clerks read original simultaneously, each adds their own amount,
-            # last writer wins — Clerk A's addition is silently lost.
-
-            # Reset to original first
             run_write("UPDATE invoice SET amount=%s WHERE invoice_id=%s", (original, sel_inv5))
 
-            # Clerk A reads original, adds add_a
             ca = _mc.connect(**DB, autocommit=False)
             cur_a = ca.cursor()
             ca.start_transaction()
             cur_a.execute("SELECT amount FROM invoice WHERE invoice_id=%s", (sel_inv5,))
-            read_a = float(cur_a.fetchone()[0]) # reads original
+            read_a = float(cur_a.fetchone()[0])
             cur_a.execute("UPDATE invoice SET amount=%s WHERE invoice_id=%s", (read_a + add_a, sel_inv5))
             ca.commit()
             cur_a.close(); ca.close()
 
             after_a = float(run_query(f"SELECT amount FROM invoice WHERE invoice_id='{sel_inv5}'").iloc[0]['amount'])
 
-            # Clerk B also read original (before A committed), adds add_b — overwrites A
             cb = _mc.connect(**DB, autocommit=False)
             cur_b = cb.cursor()
             cb.start_transaction()
@@ -993,36 +974,29 @@ Both the voyage record and the berth status update happen inside one transaction
             st.markdown("#### ❌ Without Locking — Lost Update")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Original", f"₹{original:,.2f}")
-            c2.metric("After Clerk A", f"₹{after_a:,.2f}",    delta=f"+₹{add_a:,.0f}")
+            c2.metric("After Clerk A", f"₹{after_a:,.2f}", delta=f"+₹{add_a:,.0f}")
             c3.metric("After Clerk B (overwrites A)", f"₹{after_lost:,.2f}", delta=f"Clerk A's +₹{add_a:,.0f} LOST!")
             c4.metric("Expected (correct)", f"₹{original+add_a+add_b:,.2f}")
             st.error(f"Clerk A's ₹{add_a:,.0f} addition was silently overwritten — lost update!")
 
-            # ── Reset to original before fix demo ─────────────────
             run_write("UPDATE invoice SET amount=%s WHERE invoice_id=%s", (original, sel_inv5))
-
-            # ── PART 2: FIX with SELECT ... FOR UPDATE ─────────────
-            # Clerk A locks the row, reads it, updates it, commits.
-            # Clerk B must wait — then reads A's committed value and adds on top.
 
             ca2 = _mc.connect(**DB, autocommit=False)
             cur_a2 = ca2.cursor()
             ca2.start_transaction()
             cur_a2.execute("SELECT amount FROM invoice WHERE invoice_id=%s FOR UPDATE", (sel_inv5,))
-            locked_val = float(cur_a2.fetchone()[0])     # locks the row
+            locked_val = float(cur_a2.fetchone()[0])
             cur_a2.execute("UPDATE invoice SET amount=%s WHERE invoice_id=%s", (locked_val + add_a, sel_inv5))
-
-            ca2.commit() \ # releases lock
+            ca2.commit()
             cur_a2.close(); ca2.close()
 
             after_a_fix = float(run_query(f"SELECT amount FROM invoice WHERE invoice_id='{sel_inv5}'").iloc[0]['amount'])
 
-            # Clerk B now runs — row is unlocked, reads A's committed value
             cb2 = _mc.connect(**DB, autocommit=False)
             cur_b2 = cb2.cursor()
             cb2.start_transaction()
             cur_b2.execute("SELECT amount FROM invoice WHERE invoice_id=%s FOR UPDATE", (sel_inv5,))
-            locked_val_b = float(cur_b2.fetchone()[0])   # reads original + add_a
+            locked_val_b = float(cur_b2.fetchone()[0])
             cur_b2.execute("UPDATE invoice SET amount=%s WHERE invoice_id=%s", (locked_val_b + add_b, sel_inv5))
             cb2.commit()
             cur_b2.close(); cb2.close()
